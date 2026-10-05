@@ -193,7 +193,7 @@ app.use(
 // deployed behind Vercel/proxy infrastructure.
 
 app.options(
-  /.* /,
+  /.*/,
   cors(corsOptions)
 );
 
