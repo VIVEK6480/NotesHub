@@ -581,8 +581,11 @@ function SidebarLayout({ children }) {
         @media (max-width: 900px) {
 
           .nh-sidebar-layout-main {
+
             margin-left: 0 !important;
+
             width: 100% !important;
+
           }
 
         }
@@ -779,11 +782,11 @@ function AppRoutes() {
 
       {/* =================================================
           RESET PASSWORD - PUBLIC
-          
+
           IMPORTANT:
           Backend email sends:
           /reset-password?token=xxxxx
-          
+
           So route must be /reset-password
           and ResetPassword.jsx will read
           the token from the query string.
@@ -968,15 +971,20 @@ function AppRoutes() {
 
       {/* =================================================
           ROOT
+          
+          IMPORTANT:
+          The main NotesHub URL now opens the login
+          page directly instead of redirecting to
+          /dashboard.
+
+          Login still navigates to /dashboard after
+          successful authentication.
       ================================================= */}
 
       <Route
         path="/"
         element={
-          <Navigate
-            to="/dashboard"
-            replace
-          />
+          <Login />
         }
       />
 
