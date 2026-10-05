@@ -17,8 +17,15 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 
-const CLIENT_URL =
-  process.env.CLIENT_URL || "http://localhost:5173";
+// --------------------------------------------------
+// ENVIRONMENT
+// --------------------------------------------------
+
+const isProduction =
+  process.env.NODE_ENV === "production";
+
+const isVercel =
+  process.env.VERCEL === "1";
 
 // --------------------------------------------------
 // FILE PATH CONFIGURATION
@@ -26,6 +33,133 @@ const CLIENT_URL =
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// --------------------------------------------------
+// CORS CONFIGURATION
+// --------------------------------------------------
+//
+// Production frontend:
+// https://notes-hub-frontend-eight.vercel.app
+//
+// Vercel can also generate deployment/preview URLs such as:
+// https://notes-hub-frontend-xxxxx-vivek-kumar-s-projects4.vercel.app
+//
+// Local development:
+// http://localhost:5173
+// http://127.0.0.1:5173
+//
+// --------------------------------------------------
+
+const configuredClientUrls = [
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  "https://notes-hub-frontend-eight.vercel.app",
+]
+  .filter(Boolean)
+  .map((url) =>
+    String(url)
+      .trim()
+      .replace(/\/+$/, "")
+  );
+
+const isAllowedOrigin = (origin) => {
+  // Non-browser requests such as server-to-server calls
+  // do not always contain an Origin header.
+  if (!origin) {
+    return true;
+  }
+
+  const normalizedOrigin = String(origin)
+    .trim()
+    .replace(/\/+$/, "");
+
+  // Explicitly configured origins
+  if (
+    configuredClientUrls.includes(
+      normalizedOrigin
+    )
+  ) {
+    return true;
+  }
+
+  // Local development
+  if (
+    normalizedOrigin ===
+      "http://localhost:5173" ||
+    normalizedOrigin ===
+      "http://127.0.0.1:5173"
+  ) {
+    return true;
+  }
+
+  // Allow Vercel deployment/preview URLs
+  // for this NotesHub frontend project.
+  try {
+    const url = new URL(normalizedOrigin);
+
+    if (
+      url.protocol === "https:" &&
+      url.hostname.endsWith(
+        ".vercel.app"
+      ) &&
+      (
+        url.hostname.startsWith(
+          "notes-hub-frontend-"
+        ) ||
+        url.hostname ===
+          "notes-hub-frontend-eight.vercel.app"
+      )
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+};
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn(
+      `CORS blocked origin: ${origin}`
+    );
+
+    return callback(
+      new Error(
+        "Origin is not allowed by CORS."
+      )
+    );
+  },
+
+  credentials: true,
+
+  methods: [
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ],
+
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+
+  exposedHeaders: [],
+
+  optionsSuccessStatus: 204,
+};
 
 // --------------------------------------------------
 // SECURITY
@@ -40,12 +174,27 @@ app.use(
 // --------------------------------------------------
 // CORS
 // --------------------------------------------------
+//
+// IMPORTANT:
+// This middleware must be registered before
+// authentication routes and before the 404 handler.
+//
+// It automatically handles browser OPTIONS
+// preflight requests.
+//
+// --------------------------------------------------
 
 app.use(
-  cors({
-    origin: CLIENT_URL,
-    credentials: true,
-  })
+  cors(corsOptions)
+);
+
+// Explicitly answer OPTIONS requests as well.
+// This makes the preflight behavior reliable when
+// deployed behind Vercel/proxy infrastructure.
+
+app.options(
+  /.* /,
+  cors(corsOptions)
 );
 
 // --------------------------------------------------
@@ -94,6 +243,7 @@ app.use(cookieParser());
 // Note images are NOT stored here.
 // Note images are stored directly in PostgreSQL
 // as binary data in the Note.imageData field.
+//
 // --------------------------------------------------
 
 app.use(
@@ -127,28 +277,32 @@ const authLimiter = rateLimit({
 // HEALTH CHECK
 // --------------------------------------------------
 
-app.get("/api/health", async (req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
+app.get(
+  "/api/health",
+  async (req, res) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
 
-    return res.status(200).json({
-      success: true,
-      message: "NotesHub API is running.",
-      database: "connected",
-    });
-  } catch (error) {
-    console.error(
-      "Database health check failed:",
-      error
-    );
+      return res.status(200).json({
+        success: true,
+        message:
+          "NotesHub API is running.",
+        database: "connected",
+      });
+    } catch (error) {
+      console.error(
+        "Database health check failed:",
+        error
+      );
 
-    return res.status(500).json({
-      success: false,
-      message:
-        "NotesHub API is running, but database connection failed.",
-    });
+      return res.status(500).json({
+        success: false,
+        message:
+          "NotesHub API is running, but database connection failed.",
+      });
+    }
   }
-});
+);
 
 // --------------------------------------------------
 // TEST ROUTE
@@ -157,7 +311,8 @@ app.get("/api/health", async (req, res) => {
 app.get("/api", (req, res) => {
   return res.status(200).json({
     success: true,
-    message: "Welcome to NotesHub API.",
+    message:
+      "Welcome to NotesHub API.",
   });
 });
 
@@ -223,92 +378,128 @@ app.use((req, res) => {
 // GLOBAL ERROR HANDLER
 // --------------------------------------------------
 
-app.use((error, req, res, next) => {
-  console.error(
-    "Server error:",
-    error
-  );
+app.use(
+  (error, req, res, next) => {
+    console.error(
+      "Server error:",
+      error
+    );
 
-  // Payload too large
-  if (
-    error?.type ===
-      "entity.too.large" ||
-    error?.status === 413
-  ) {
-    return res.status(413).json({
+    // Payload too large
+    if (
+      error?.type ===
+        "entity.too.large" ||
+      error?.status === 413
+    ) {
+      return res.status(413).json({
+        success: false,
+        message:
+          "Request is too large. Please select a smaller image.",
+      });
+    }
+
+    // CORS error
+    if (
+      error?.message ===
+      "Origin is not allowed by CORS."
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Origin is not allowed by CORS.",
+      });
+    }
+
+    return res.status(
+      error.status || 500
+    ).json({
       success: false,
       message:
-        "Request is too large. Please select a smaller image.",
+        error.message ||
+        "Internal server error.",
     });
   }
-
-  return res.status(
-    error.status || 500
-  ).json({
-    success: false,
-    message:
-      error.message ||
-      "Internal server error.",
-  });
-});
+);
 
 // --------------------------------------------------
-// START SERVER
+// LOCAL SERVER
+// --------------------------------------------------
+//
+// Vercel handles the HTTP server itself.
+// app.listen() should only run during local
+// development.
+//
+// Prisma is intentionally NOT connected here
+// during Vercel startup. Prisma connects lazily
+// when the first database query is executed.
+//
+// This prevents database initialization from
+// blocking the Vercel function from serving
+// CORS/preflight requests.
+//
 // --------------------------------------------------
 
-async function startServer() {
-  try {
-    // Connect Prisma to Neon PostgreSQL
-    await prisma.$connect();
+if (!isVercel) {
+  const startServer = async () => {
+    try {
+      await prisma.$connect();
 
-    console.log(
-      "✅ Neon PostgreSQL connected."
-    );
+      console.log(
+        "✅ Neon PostgreSQL connected."
+      );
 
-    app.listen(
-      PORT,
-      "0.0.0.0",
-      () => {
-        console.log(
-          `🚀 NotesHub API running on port ${PORT}`
-        );
+      app.listen(
+        PORT,
+        "0.0.0.0",
+        () => {
+          console.log(
+            `🚀 NotesHub API running on port ${PORT}`
+          );
 
-        console.log(
-          `📡 Local: http://localhost:${PORT}`
-        );
+          console.log(
+            `📡 Local: http://localhost:${PORT}`
+          );
 
-        console.log(
-          `❤️ Health: http://localhost:${PORT}/api/health`
-        );
+          console.log(
+            `❤️ Health: http://localhost:${PORT}/api/health`
+          );
 
-        console.log(
-          `📝 Notes: http://localhost:${PORT}/api/notes`
-        );
+          console.log(
+            `📝 Notes: http://localhost:${PORT}/api/notes`
+          );
 
-        console.log(
-          `🖼️ Uploads: http://localhost:${PORT}/uploads`
-        );
+          console.log(
+            `🖼️ Uploads: http://localhost:${PORT}/uploads`
+          );
 
-        console.log(
-          `📦 JSON body limit: 20MB`
-        );
-      }
-    );
-  } catch (error) {
-    console.error(
-      "❌ Failed to start server."
-    );
+          console.log(
+            `📦 JSON body limit: 20MB`
+          );
+        }
+      );
+    } catch (error) {
+      console.error(
+        "❌ Failed to start server."
+      );
 
-    console.error(error);
+      console.error(error);
 
-    await prisma.$disconnect();
+      await prisma.$disconnect();
 
-    process.exit(1);
-  }
+      process.exit(1);
+    }
+  };
+
+  startServer();
 }
 
 // --------------------------------------------------
-// RUN SERVER
+// VERCEL / SERVERLESS EXPORT
+// --------------------------------------------------
+//
+// Vercel imports this Express application and
+// handles the HTTP server lifecycle.
+//
 // --------------------------------------------------
 
-startServer();
+export default app;
