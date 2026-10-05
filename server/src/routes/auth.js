@@ -116,10 +116,7 @@ function setAuthCookie(res, token) {
     httpOnly: true,
     secure:
       process.env.NODE_ENV === "production",
-    sameSite:
-      process.env.NODE_ENV === "production"
-        ? "none"
-        : "lax",
+    sameSite: "lax",
 
     maxAge:
       7 *
@@ -137,10 +134,7 @@ function clearAuthCookie(res) {
     httpOnly: true,
     secure:
       process.env.NODE_ENV === "production",
-    sameSite:
-      process.env.NODE_ENV === "production"
-        ? "none"
-        : "lax",
+    sameSite: "lax",
     path: "/",
   });
 }
