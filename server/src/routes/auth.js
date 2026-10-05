@@ -116,7 +116,7 @@ function setAuthCookie(res, token) {
     httpOnly: true,
     secure:
       process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: "none",
 
     maxAge:
       7 *
@@ -134,7 +134,7 @@ function clearAuthCookie(res) {
     httpOnly: true,
     secure:
       process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: "none",
     path: "/",
   });
 }
