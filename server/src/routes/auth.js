@@ -7,6 +7,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { Resend } from "resend";
+import { put, del } from "@vercel/blob";
 
 import { prisma } from "../lib/prisma.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -18,14 +19,19 @@ const COOKIE_NAME = "noteshub_token";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const isProduction =
+  process.env.NODE_ENV === "production";
+
 const avatarDirectory = path.join(
   __dirname,
   "../../uploads/avatars"
 );
 
-fs.mkdirSync(avatarDirectory, {
-  recursive: true,
-});
+if (!isProduction) {
+  fs.mkdirSync(avatarDirectory, {
+    recursive: true,
+  });
+}
 
 /* =========================
    RESEND
@@ -48,25 +54,27 @@ const RESEND_FROM_EMAIL =
    AVATAR UPLOAD
 ========================= */
 
-const avatarStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, avatarDirectory);
-  },
+const avatarStorage = isProduction
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: (req, file, cb) => {
+        cb(null, avatarDirectory);
+      },
 
-  filename: (req, file, cb) => {
-    const extension = path
-      .extname(file.originalname)
-      .toLowerCase();
+      filename: (req, file, cb) => {
+        const extension = path
+          .extname(file.originalname)
+          .toLowerCase();
 
-    const safeExtension =
-      extension || ".jpg";
+        const safeExtension =
+          extension || ".jpg";
 
-    cb(
-      null,
-      `${req.user.id}-${Date.now()}${safeExtension}`
-    );
-  },
-});
+        cb(
+          null,
+          `${req.user.id}-${Date.now()}${safeExtension}`
+        );
+      },
+    });
 
 const uploadAvatar = multer({
   storage: avatarStorage,
@@ -116,7 +124,10 @@ function setAuthCookie(res, token) {
     httpOnly: true,
     secure:
       process.env.NODE_ENV === "production",
-    sameSite: "none",
+    sameSite:
+      process.env.NODE_ENV === "production"
+        ? "none"
+        : "lax",
 
     maxAge:
       7 *
@@ -134,7 +145,10 @@ function clearAuthCookie(res) {
     httpOnly: true,
     secure:
       process.env.NODE_ENV === "production",
-    sameSite: "none",
+    sameSite:
+      process.env.NODE_ENV === "production"
+        ? "none"
+        : "lax",
     path: "/",
   });
 }
@@ -1190,8 +1204,31 @@ router.post(
           },
         });
 
-      const avatarUrl =
-        `/uploads/avatars/${req.file.filename}`;
+      let avatarUrl;
+
+      if (isProduction) {
+        const extension = path
+          .extname(req.file.originalname)
+          .toLowerCase();
+
+        const safeExtension =
+          extension || ".jpg";
+
+        const blob = await put(
+          `avatars/${req.user.id}-${Date.now()}${safeExtension}`,
+          req.file.buffer,
+          {
+            access: "public",
+            contentType: req.file.mimetype,
+            addRandomSuffix: true,
+          }
+        );
+
+        avatarUrl = blob.url;
+      } else {
+        avatarUrl =
+          `/uploads/avatars/${req.file.filename}`;
+      }
 
       const updatedUser =
         await prisma.user.update({
@@ -1218,7 +1255,8 @@ router.post(
         oldUser?.avatarUrl &&
         oldUser.avatarUrl.startsWith(
           "/uploads/avatars/"
-        )
+        ) &&
+        !isProduction
       ) {
         const oldFilename =
           path.basename(
@@ -1248,6 +1286,23 @@ router.post(
             }
           );
         }
+      }
+
+      if (
+        isProduction &&
+        oldUser?.avatarUrl &&
+        oldUser.avatarUrl.includes(
+          ".blob.vercel-storage.com/"
+        )
+      ) {
+        await del(
+          oldUser.avatarUrl
+        ).catch((deleteError) => {
+          console.error(
+            "Unable to remove old Blob avatar:",
+            deleteError
+          );
+        });
       }
 
       return res.status(200).json({
